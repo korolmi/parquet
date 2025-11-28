@@ -52,7 +52,61 @@ def findColumn(offset):
                 print("Offset does not belong to any column within row group...") # если на такое реально напоремся - буду разбираться...
             prevOffset = row[1]    
         print("Offset does not belong to any row group...") # если на такое реально напоремся - буду разбираться...
-        
+
+def printColInfo(rowGroupInd,colName):
+    """ печатает информацию о колонке row group по ее имени """
+    
+    resDf = duckdb.sql(f"""
+        select
+            column_id,
+            type, 
+            stats_min_value, 
+            stats_max_value, 
+            encodings, 
+            index_page_offset, 
+            bloom_filter_offset,
+            bloom_filter_length,
+            compression,
+            data_page_offset,
+            dictionary_page_offset,
+            total_compressed_size,
+            num_values,
+            stats_null_count,
+            stats_distinct_count
+        from meta 
+        where 
+            row_group_id={rowGroupInd} 
+            and path_in_schema='{colName}'
+    """).df()
+    resRow = dict(zip(resDf.columns,resDf.iloc[0]))
+    print("Column :",colName, "(", resRow["type"], ") #", resRow["column_id"]) 
+    print("count/null/distinct:",f'{resRow["num_values"]}/{resRow["stats_null_count"]}/{resRow["stats_distinct_count"]}') 
+    print("stats_min_value    :",resRow["stats_min_value"]) 
+    print("stats_max_value    :",resRow["stats_max_value"]) 
+    print("encodings          :",resRow["encodings"]) 
+    print("index_page_offset  :",resRow["index_page_offset"]) 
+    print("bloom_filter_offset:",resRow["bloom_filter_offset"])
+    print("bloom_filter_length:",resRow["bloom_filter_length"])
+    print("compression        :",resRow["compression"])
+    print("data_page_offset   :",resRow["data_page_offset"])
+    print("dict_page_offset   :",resRow["dictionary_page_offset"])
+    print("compressed_size    :",resRow["total_compressed_size"])
+
+def getExcludedGroupsStr(colName,colValue):
+    """ возвращает строку с перечнем исключенных row group """
+
+    global PQ_FILE, grpNum
+
+    res = duckdb.sql(f"select row_group_id from parquet_bloom_probe('{PQ_FILE}', '{colName}', {colValue}) where bloom_filter_excludes").df().values
+    if len(res)>0:
+        grList = res.tolist()
+        if len(grList)<grpNum:
+            return f"""Following row groups will be excluded: {",".join([str(r[0]) for r in grList])}"""
+        else:
+            return "All row groups will be excluded"
+    else:
+        return "No row groups will be excluded"
+
 def doPrepLists(cols,groups,showData=False,bloomCols=None):
 
     valText = widgets.Text(
@@ -85,45 +139,11 @@ def doPrepLists(cols,groups,showData=False,bloomCols=None):
         with outList:
             if bloomCols:
                 print("(working...)")
-                res = duckdb.sql(f"select row_group_id from parquet_bloom_probe('{PQ_FILE}', '{colList.value}', {valText.value}) where bloom_filter_excludes").df().values
+                res = getExcludedGroupsStr(colList.value, valText.value)
                 outList.clear_output()
-                if len(res)>0:
-                    grList = res.tolist()
-                    if len(grList)<grpNum:
-                        print("Following row groups will be excluded:", ",".join([str(r[0]) for r in grList]))
-                    else:
-                        print("All row groups will be excluded")
-                else:
-                    print("No row groups will be excluded")
+                print(res)
             else:
-                column_id,col_type,stats_min_value,stats_max_value,encodings,index_page_offset,bloom_filter_offset,bloom_filter_length,compression,data_page_offset,total_compressed_size = duckdb.sql(f"""
-                    select
-                        column_id,
-                        type, 
-                        stats_min_value, 
-                        stats_max_value, 
-                        encodings, 
-                        index_page_offset, 
-                        bloom_filter_offset,
-                        bloom_filter_length,
-                        compression,
-                        data_page_offset,
-                        total_compressed_size
-                    from meta 
-                    where 
-                        row_group_id={grpList.value} 
-                        and path_in_schema='{colList.value}'
-                """).df().values.tolist()[0]
-                print("Column :",colList.value, "(", col_type, ") #", column_id) 
-                print("stats_min_value    :",stats_min_value) 
-                print("stats_max_value    :",stats_max_value) 
-                print("encodings          :",encodings) 
-                print("index_page_offset  :",index_page_offset) 
-                print("bloom_filter_offset:",bloom_filter_offset)
-                print("bloom_filter_length:",bloom_filter_length)
-                print("compression        :",compression)
-                print("data_page_offset   :",data_page_offset)
-                print("compressed_size    :",total_compressed_size)
+                printColInfo(grpList.value,colList.value)
 
     showBtn.on_click(doShow)
 
